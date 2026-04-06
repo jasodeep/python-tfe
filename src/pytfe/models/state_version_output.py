@@ -22,7 +22,6 @@ class StateVersionOutput(BaseModel):
 class StateVersionOutputsListOptions(BaseModel):
     model_config = ConfigDict(populate_by_name=True, validate_by_name=True)
 
-    page_number: int | None = Field(None, alias="page[number]")
     page_size: int | None = Field(None, alias="page[size]")
 
 

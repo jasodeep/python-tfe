@@ -72,7 +72,6 @@ class VariableSetListOptions(BaseModel):
     """Options for listing variable sets."""
 
     # Pagination options
-    page_number: int | None = None
     page_size: int | None = None
     include: list[VariableSetIncludeOpt] | None = None
     query: str | None = None  # Filter by name

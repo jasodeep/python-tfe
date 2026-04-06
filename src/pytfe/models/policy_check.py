@@ -109,7 +109,6 @@ class PolicyCheckListOptions(BaseModel):
     model_config = ConfigDict(populate_by_name=True, validate_by_name=True)
 
     include: list[PolicyCheckIncludeOpt] | None = Field(None, alias="include")
-    page_number: int | None = Field(None, alias="page[number]")
     page_size: int | None = Field(None, alias="page[size]")
 
 

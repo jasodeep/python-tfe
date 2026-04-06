@@ -28,6 +28,7 @@ class ConfigurationSource(str, Enum):
     GITLAB = "gitlab"
     ADO = "ado"
     TERRAFORM = "terraform"
+    TERRAFORM_CLOUD = "terraform+cloud"
 
 
 class ConfigVerIncludeOpt(str, Enum):

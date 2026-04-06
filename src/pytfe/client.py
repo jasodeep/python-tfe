@@ -72,6 +72,7 @@ class TFEClient:
         self.plans = Plans(self._transport)
         self.organizations = Organizations(self._transport)
         self.organization_memberships = OrganizationMemberships(self._transport)
+
         self.projects = Projects(self._transport)
         self.variables = Variables(self._transport)
         self.variable_sets = VariableSets(self._transport)

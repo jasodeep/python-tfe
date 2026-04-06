@@ -19,7 +19,7 @@ class _Service:
         page = 1
         while True:
             p = dict(params or {})
-            p.setdefault("page[number]", page)
+            p["page[number]"] = page
             p.setdefault("page[size]", 100)
             r = self.t.request("GET", path, params=p)
 

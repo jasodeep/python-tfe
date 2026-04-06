@@ -51,11 +51,11 @@ def _run_trigger_from(d: dict[str, Any], org: str | None = None) -> RunTrigger:
         sourceable_id = sourceable_rel["data"].get("id", "")
 
     # Create workspace objects with proper IDs
-    workspace = Workspace(
-        id=workspace_id, name=workspace_name_str, organization=org or ""
+    workspace = Workspace.model_validate(
+        {"id": workspace_id, "name": workspace_name_str, "organization": org}
     )
-    sourceable = Workspace(
-        id=sourceable_id, name=sourceable_name_str, organization=org or ""
+    sourceable = Workspace.model_validate(
+        {"id": sourceable_id, "name": sourceable_name_str, "organization": org}
     )
     sourceable_choice = SourceableChoice(
         workspace=sourceable
