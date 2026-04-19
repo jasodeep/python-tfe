@@ -58,6 +58,17 @@ from .data_retention_policy import (
     DataRetentionPolicyDontDeleteSetOptions,
     DataRetentionPolicySetOptions,
 )
+from .explorer import (
+    ExplorerQueryOptions,
+    ExplorerRow,
+    ExplorerSavedQuery,
+    ExplorerSavedQueryFilter,
+    ExplorerSavedView,
+    ExplorerSavedViewCreateOptions,
+    ExplorerSavedViewUpdateOptions,
+    ExplorerUrlFilter,
+    ExplorerViewType,
+)
 
 # ── OAuth ─────────────────────────────────────────────────────────────────────
 from .oauth_client import (
@@ -514,6 +525,16 @@ __all__ = [
     "DataRetentionPolicyDontDeleteSetOptions",
     "DataRetentionPolicySetOptions",
     "EffectiveTagBinding",
+    # Explorer
+    "ExplorerQueryOptions",
+    "ExplorerRow",
+    "ExplorerSavedQuery",
+    "ExplorerSavedQueryFilter",
+    "ExplorerSavedView",
+    "ExplorerSavedViewCreateOptions",
+    "ExplorerSavedViewUpdateOptions",
+    "ExplorerUrlFilter",
+    "ExplorerViewType",
     "Tag",
     "TagBinding",
     "TagList",

@@ -530,3 +530,13 @@ class InvalidKeyIDError(InvalidValues):
 
     def __init__(self, message: str = "invalid value for key-id"):
         super().__init__(message)
+
+
+class InvalidExplorerSavedViewIDError(InvalidValues):
+    """Input is not a non-empty Explorer saved-view identifier (e.g. ``sq-...``).
+
+    Triggers the same validation as other path ids: no slash, no whitespace.
+    """
+
+    def __init__(self, message: str = "invalid value for explorer saved view ID"):
+        super().__init__(message)

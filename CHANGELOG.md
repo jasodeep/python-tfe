@@ -1,4 +1,10 @@
-# Unreleased
+# v0.2.0 (Unreleased)
+
+## Features
+
+### Explorer
+
+* Added Explorer API support: organization queries, CSV export, and saved views (create, read, update, delete, and re-query results) for HCP Terraform / Terraform Enterprise workspace visibility.
 
 # v0.1.3
 
