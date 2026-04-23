@@ -1,5 +1,11 @@
 # Unreleased
 
+## Features
+
+### Explorer API
+* Added Explorer resource support with query, CSV export, saved view CRUD, saved view result query, and saved view CSV export endpoints.
+* Added Explorer models, client registration, comprehensive unit tests, and end-to-end example usage.
+
 # v0.1.3
 
 ## Enhancements
