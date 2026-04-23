@@ -73,7 +73,7 @@ class TFEClient:
         self.plans = Plans(self._transport)
         self.organizations = Organizations(self._transport)
         self.organization_memberships = OrganizationMemberships(self._transport)
-        self.explorer = Explorer(self._transport)
+        self.explorer = Explorer(self._transport)  # org Explorer queries and saved views
 
         self.projects = Projects(self._transport)
         self.variables = Variables(self._transport)

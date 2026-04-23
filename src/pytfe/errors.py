@@ -373,7 +373,7 @@ class InvalidQueryRunIDError(InvalidValues):
 
 
 class InvalidExplorerSavedViewIDError(InvalidValues):
-    """Raised when an invalid Explorer saved view ID is provided."""
+    """Raised when a saved view id is missing or blank (Explorer view-scoped routes)."""
 
     def __init__(self, message: str = "invalid value for explorer saved view ID"):
         super().__init__(message)

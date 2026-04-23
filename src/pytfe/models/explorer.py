@@ -1,7 +1,10 @@
 # Copyright IBM Corp. 2025, 2026
 # SPDX-License-Identifier: MPL-2.0
 
-"""Explorer models for Terraform Enterprise."""
+"""Pydantic models for the Explorer API (query options, rows, saved views).
+
+Aliases mirror JSON:API and Explorer query-string names (type, page[number], etc.).
+"""
 
 from __future__ import annotations
 
@@ -13,17 +16,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExplorerViewType(str, Enum):
-    """Available Explorer view types."""
+    """Explorer `type` / `query-type` discriminator (see product docs for supported views)."""
 
     WORKSPACES = "workspaces"
     TF_VERSIONS = "tf_versions"
     PROVIDERS = "providers"
     MODULES = "modules"
-    RESOURCES = "resources"
+    RESOURCES = "resources"  # Present when the deployment exposes a resources view.
 
 
 class ExplorerUrlFilter(BaseModel):
-    """Represents one URL filter entry for query endpoints."""
+    """One slot in ExplorerQueryOptions.filters → filter[i][field][op][idx] query keys."""
 
     index: int = Field(..., ge=0, description="Filter index in the query string")
     field: str = Field(
@@ -39,7 +42,7 @@ class ExplorerUrlFilter(BaseModel):
 
 
 class ExplorerQueryOptions(BaseModel):
-    """Options for executing an Explorer query."""
+    """GET /organizations/{org}/explorer (and export/csv) query string as structured fields."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -61,7 +64,7 @@ class ExplorerQueryOptions(BaseModel):
 
 
 class ExplorerRow(BaseModel):
-    """Represents a single Explorer query result row."""
+    """One Explorer result row: json:api id/type plus flat attributes for the view."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -71,7 +74,7 @@ class ExplorerRow(BaseModel):
 
 
 class ExplorerSavedQueryFilter(BaseModel):
-    """Filter object stored in saved query payloads."""
+    """One saved-view filter row (list-valued `value` matches create/update JSON)."""
 
     field: str = Field(..., min_length=1)
     operator: str = Field(..., min_length=1)
@@ -79,7 +82,7 @@ class ExplorerSavedQueryFilter(BaseModel):
 
 
 class ExplorerSavedQuery(BaseModel):
-    """Query definition used by Explorer saved views."""
+    """Nested query on a saved view: view type, filters, optional fields and sort lists."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -90,7 +93,7 @@ class ExplorerSavedQuery(BaseModel):
 
 
 class ExplorerSavedView(BaseModel):
-    """Saved Explorer query metadata and query definition."""
+    """Saved view resource: metadata plus embedded query (response and some request paths)."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -102,7 +105,7 @@ class ExplorerSavedView(BaseModel):
 
 
 class ExplorerSavedViewCreateOptions(BaseModel):
-    """Request body options for creating a saved view."""
+    """POST .../explorer/views attributes: display name, top-level query-type, nested query."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -112,7 +115,7 @@ class ExplorerSavedViewCreateOptions(BaseModel):
 
 
 class ExplorerSavedViewUpdateOptions(BaseModel):
-    """Request body options for updating a saved view."""
+    """PATCH .../explorer/views/{id} attributes: name and full replacement query."""
 
     model_config = ConfigDict(populate_by_name=True)
 

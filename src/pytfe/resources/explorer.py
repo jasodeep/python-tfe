@@ -1,12 +1,18 @@
 # Copyright IBM Corp. 2025, 2026
 # SPDX-License-Identifier: MPL-2.0
 
-"""Explorer API resource."""
+"""Explorer API resource.
+
+Maps organization-scoped Explorer endpoints (ad hoc query, CSV export, saved views) to
+typed models. Saved-view create/update reshape filter JSON; read paths normalize API
+variants before validation.
+"""
 
 from __future__ import annotations
 
 import csv
 import io
+import logging
 from collections.abc import Iterator
 from typing import Any
 
@@ -15,6 +21,7 @@ from ..errors import (
     InvalidOrgError,
     NotFound,
     ServerError,
+    ValidationError,
 )
 from ..models.explorer import (
     ExplorerQueryOptions,
@@ -27,8 +34,72 @@ from ..models.explorer import (
 from ..utils import valid_string_id
 from ._base import _Service
 
+_log = logging.getLogger(__name__)
+
+
+def _explorer_single_resource_data(
+    resp: Any,
+    *,
+    operation: str,
+    organization: str,
+    view_id: str | None = None,
+) -> dict[str, Any]:
+    """Parse json:api envelope for a single Explorer saved view; raise ValidationError if unusable."""
+    ctx = f"org={organization!r}"
+    if view_id is not None:
+        ctx += f" view_id={view_id!r}"
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        _log.warning("explorer.%s: invalid JSON response (%s)", operation, ctx)
+        raise ValidationError(
+            f"Explorer {operation}: response body is not valid JSON ({ctx})"
+        ) from exc
+    if not isinstance(payload, dict):
+        _log.warning("explorer.%s: top-level JSON is not an object (%s)", operation, ctx)
+        raise ValidationError(
+            f"Explorer {operation}: expected JSON object at top level ({ctx})"
+        )
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        _log.warning(
+            "explorer.%s: missing or invalid 'data' (type=%s) (%s)",
+            operation,
+            type(data).__name__,
+            ctx,
+        )
+        raise ValidationError(
+            f"Explorer {operation}: expected json:api 'data' object ({ctx})"
+        )
+    return data
+
+
+def _require_organization(organization: str) -> None:
+    """Reject blank organization identifiers before building paths."""
+    if not valid_string_id(organization):
+        raise InvalidOrgError()
+
+
+def _require_organization_and_view(organization: str, view_id: str) -> None:
+    """Validate org and saved-view id for routes under .../explorer/views/{view_id}."""
+    _require_organization(organization)
+    if not valid_string_id(view_id):
+        raise InvalidExplorerSavedViewIDError()
+
+
+def _write_attributes_with_query_shape(
+    options: ExplorerSavedViewCreateOptions | ExplorerSavedViewUpdateOptions,
+) -> dict[str, Any]:
+    """Serialize create/update options; map saved-query filters to the map shape POST/PATCH expect."""
+    attrs = options.model_dump(by_alias=True, exclude_none=True, mode="json")
+    raw_query = attrs.get("query")
+    if isinstance(raw_query, dict):
+        attrs["query"] = _saved_query_to_api_shape(raw_query)
+    return attrs
+
 
 def _query_params(options: ExplorerQueryOptions) -> dict[str, Any]:
+    # mode="json" keeps ExplorerViewType as strings; filters are expanded separately (Explorer URL grammar).
     params = options.model_dump(
         by_alias=True,
         exclude_none=True,
@@ -48,7 +119,7 @@ def _parse_row(item: dict[str, Any]) -> ExplorerRow:
 
 
 def _saved_query_to_api_shape(raw_query: dict[str, Any]) -> dict[str, Any]:
-    """Transform normalized saved-query payload to API-accepted create/update shape."""
+    """Map {field, operator, value} filter rows to nested {field: {operator: [...]}} JSON."""
     query = dict(raw_query)
     raw_filter = query.get("filter")
     if isinstance(raw_filter, list):
@@ -73,7 +144,7 @@ def _saved_query_to_api_shape(raw_query: dict[str, Any]) -> dict[str, Any]:
 def _normalize_saved_query(
     raw_query: dict[str, Any], raw_query_type: str | None
 ) -> dict[str, Any]:
-    """Normalize API variants of saved-query payloads to model shape."""
+    """Coerce saved-view query JSON into the flat filter + list fields shape our models use."""
     query = dict(raw_query)
 
     if "type" not in query and raw_query_type:
@@ -128,6 +199,7 @@ def _normalize_saved_query(
 
 
 def _parse_saved_view(item: dict[str, Any]) -> ExplorerSavedView:
+    # json:api envelope: attributes carry name, timestamps, nested query and query-type.
     attrs = item.get("attributes", {})
     query_type = attrs.get("query-type")
     query = attrs.get("query", {})
@@ -160,7 +232,7 @@ def _deleted_saved_view_fallback(view_id: str) -> ExplorerSavedView:
 def _query_options_from_saved_view(
     saved_view: ExplorerSavedView,
 ) -> ExplorerQueryOptions:
-    """Convert a saved view query into ExplorerQueryOptions."""
+    """Replay a stored saved query as GET /explorer query params (used by CSV fallback)."""
     query = saved_view.query
     filters: list[ExplorerUrlFilter] = []
     if query.filter:
@@ -186,7 +258,7 @@ def _query_options_from_saved_view(
 
 
 def _rows_to_csv(rows: list[ExplorerRow]) -> str:
-    """Build CSV from Explorer rows attributes."""
+    """Union of row attribute keys as header; last-resort CSV when /views/.../csv is unavailable."""
     if not rows:
         return ""
     keys: set[str] = set()
@@ -202,27 +274,38 @@ def _rows_to_csv(rows: list[ExplorerRow]) -> str:
 
 
 class Explorer(_Service):
-    """Explorer API for Terraform Enterprise."""
+    """Organization Explorer: ad hoc queries, CSV export, and saved view CRUD."""
 
     def query(
         self, organization: str, options: ExplorerQueryOptions
     ) -> Iterator[ExplorerRow]:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
+        _require_organization(organization)
+        _log.debug(
+            "explorer.query org=%r view_type=%s",
+            organization,
+            options.view_type.value,
+        )
+        # GET .../explorer — paginated JSON rows for the given view and filters.
         path = f"/api/v2/organizations/{organization}/explorer"
         for item in self._list(path, params=_query_params(options)):
             yield _parse_row(item)
 
     def export_csv(self, organization: str, options: ExplorerQueryOptions) -> str:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
+        _require_organization(organization)
+        _log.debug(
+            "explorer.export_csv org=%r view_type=%s",
+            organization,
+            options.view_type.value,
+        )
+        # Same query string as query(); response is a single unpaged CSV document.
         path = f"/api/v2/organizations/{organization}/explorer/export/csv"
         resp = self.t.request("GET", path, params=_query_params(options))
         return resp.text
 
     def list_saved_views(self, organization: str) -> Iterator[ExplorerSavedView]:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
+        _require_organization(organization)
+        _log.debug("explorer.list_saved_views org=%r", organization)
+        # GET collection of explorer-saved-queries for the org.
         path = f"/api/v2/organizations/{organization}/explorer/views"
         for item in self._list(path):
             yield _parse_saved_view(item)
@@ -230,12 +313,9 @@ class Explorer(_Service):
     def create_saved_view(
         self, organization: str, options: ExplorerSavedViewCreateOptions
     ) -> ExplorerSavedView:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
-        attrs = options.model_dump(by_alias=True, exclude_none=True, mode="json")
-        raw_query = attrs.get("query")
-        if isinstance(raw_query, dict):
-            attrs["query"] = _saved_query_to_api_shape(raw_query)
+        _require_organization(organization)
+        # POST json:api explorer-saved-queries; filters rewritten for server expectations.
+        attrs = _write_attributes_with_query_shape(options)
         body = {
             "data": {
                 "type": "explorer-saved-queries",
@@ -244,16 +324,30 @@ class Explorer(_Service):
         }
         path = f"/api/v2/organizations/{organization}/explorer/views"
         resp = self.t.request("POST", path, json_body=body)
-        return _parse_saved_view(resp.json()["data"])
+        data = _explorer_single_resource_data(
+            resp, operation="create_saved_view", organization=organization
+        )
+        view = _parse_saved_view(data)
+        _log.info("explorer.create_saved_view org=%r id=%r", organization, view.id)
+        return view
 
     def read_saved_view(self, organization: str, view_id: str) -> ExplorerSavedView:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
-        if not valid_string_id(view_id):
-            raise InvalidExplorerSavedViewIDError()
+        _require_organization_and_view(organization, view_id)
+        _log.debug(
+            "explorer.read_saved_view org=%r view_id=%r",
+            organization,
+            view_id,
+        )
+        # Returns stored definition only; does not execute the query (see saved_view_results).
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}"
         resp = self.t.request("GET", path)
-        return _parse_saved_view(resp.json()["data"])
+        data = _explorer_single_resource_data(
+            resp,
+            operation="read_saved_view",
+            organization=organization,
+            view_id=view_id,
+        )
+        return _parse_saved_view(data)
 
     def update_saved_view(
         self,
@@ -261,14 +355,9 @@ class Explorer(_Service):
         view_id: str,
         options: ExplorerSavedViewUpdateOptions,
     ) -> ExplorerSavedView:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
-        if not valid_string_id(view_id):
-            raise InvalidExplorerSavedViewIDError()
-        attrs = options.model_dump(by_alias=True, exclude_none=True, mode="json")
-        raw_query = attrs.get("query")
-        if isinstance(raw_query, dict):
-            attrs["query"] = _saved_query_to_api_shape(raw_query)
+        _require_organization_and_view(organization, view_id)
+        attrs = _write_attributes_with_query_shape(options)
+        # PATCH includes resource id in the envelope per json:api update conventions.
         body = {
             "data": {
                 "type": "explorer-saved-queries",
@@ -278,55 +367,101 @@ class Explorer(_Service):
         }
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}"
         resp = self.t.request("PATCH", path, json_body=body)
-        return _parse_saved_view(resp.json()["data"])
+        data = _explorer_single_resource_data(
+            resp,
+            operation="update_saved_view",
+            organization=organization,
+            view_id=view_id,
+        )
+        view = _parse_saved_view(data)
+        _log.info("explorer.update_saved_view org=%r id=%r", organization, view.id)
+        return view
 
     def delete_saved_view(self, organization: str, view_id: str) -> ExplorerSavedView:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
-        if not valid_string_id(view_id):
-            raise InvalidExplorerSavedViewIDError()
+        _require_organization_and_view(organization, view_id)
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}"
         resp = self.t.request("DELETE", path)
+        # DELETE often returns an empty body; callers still receive a minimal ExplorerSavedView.
         raw_text = (resp.text or "").strip()
         if not raw_text:
+            _log.debug(
+                "explorer.delete_saved_view: empty body, returning stub org=%r id=%r",
+                organization,
+                view_id,
+            )
             return _deleted_saved_view_fallback(view_id)
 
         try:
             payload = resp.json()
         except ValueError:
+            _log.debug(
+                "explorer.delete_saved_view: non-JSON body, returning stub org=%r id=%r",
+                organization,
+                view_id,
+            )
             return _deleted_saved_view_fallback(view_id)
 
         if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
             return _parse_saved_view(payload["data"])
+        _log.debug(
+            "explorer.delete_saved_view: no data object, returning stub org=%r id=%r",
+            organization,
+            view_id,
+        )
         return _deleted_saved_view_fallback(view_id)
 
     def saved_view_results(
         self, organization: str, view_id: str
     ) -> Iterator[ExplorerRow]:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
-        if not valid_string_id(view_id):
-            raise InvalidExplorerSavedViewIDError()
+        _require_organization_and_view(organization, view_id)
+        _log.debug(
+            "explorer.saved_view_results org=%r view_id=%r",
+            organization,
+            view_id,
+        )
+        # Re-runs the saved query; rows match ad hoc query() shape (current data only).
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}/results"
         for item in self._list(path):
             yield _parse_row(item)
 
     def saved_view_results_csv(self, organization: str, view_id: str) -> str:
-        if not valid_string_id(organization):
-            raise InvalidOrgError()
-        if not valid_string_id(view_id):
-            raise InvalidExplorerSavedViewIDError()
+        _require_organization_and_view(organization, view_id)
+        _log.debug(
+            "explorer.saved_view_results_csv org=%r view_id=%r",
+            organization,
+            view_id,
+        )
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}/csv"
         try:
             resp = self.t.request("GET", path)
             return resp.text
-        except (NotFound, ServerError):
-            pass
+        except (NotFound, ServerError) as exc:
+            _log.info(
+                "explorer.saved_view_results_csv: primary CSV route unavailable (%s); "
+                "trying export_csv replay org=%r view_id=%r",
+                exc.__class__.__name__,
+                organization,
+                view_id,
+            )
 
+        # Fall back: replay saved definition via export_csv, then row materialization if needed.
         try:
             saved_view = self.read_saved_view(organization, view_id)
             options = _query_options_from_saved_view(saved_view)
-            return self.export_csv(organization, options)
-        except (NotFound, ServerError):
+            csv_text = self.export_csv(organization, options)
+            _log.info(
+                "explorer.saved_view_results_csv: used export_csv fallback org=%r view_id=%r",
+                organization,
+                view_id,
+            )
+            return csv_text
+        except (NotFound, ServerError) as exc:
+            _log.warning(
+                "explorer.saved_view_results_csv: export_csv fallback failed (%s); "
+                "building CSV from row stream org=%r view_id=%r",
+                exc.__class__.__name__,
+                organization,
+                view_id,
+            )
             rows = list(self.saved_view_results(organization, view_id))
             return _rows_to_csv(rows)

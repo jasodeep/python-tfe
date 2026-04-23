@@ -7,7 +7,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from pytfe.errors import InvalidExplorerSavedViewIDError, InvalidOrgError, NotFound
+from pytfe.errors import (
+    InvalidExplorerSavedViewIDError,
+    InvalidOrgError,
+    NotFound,
+    ValidationError,
+)
 from pytfe.models import (
     ExplorerQueryOptions,
     ExplorerSavedQuery,
@@ -181,6 +186,29 @@ class TestExplorerSavedViews:
         assert body["data"]["attributes"]["query"]["filter"] == [
             {"workspace_name": {"contains": ["test"]}}
         ]
+
+    def test_create_saved_view_invalid_json_raises(self, explorer_service, mock_transport):
+        response = Mock()
+        response.json.side_effect = ValueError("invalid json")
+        mock_transport.request.return_value = response
+
+        options = ExplorerSavedViewCreateOptions(
+            name="my-view",
+            query_type=ExplorerViewType.WORKSPACES,
+            query=ExplorerSavedQuery(query_type=ExplorerViewType.WORKSPACES),
+        )
+        with pytest.raises(ValidationError, match="create_saved_view"):
+            explorer_service.create_saved_view("acme", options)
+
+    def test_read_saved_view_missing_data_object_raises(
+        self, explorer_service, mock_transport
+    ):
+        response = Mock()
+        response.json.return_value = {"data": []}
+        mock_transport.request.return_value = response
+
+        with pytest.raises(ValidationError, match="read_saved_view"):
+            explorer_service.read_saved_view("acme", "sq-1")
 
     def test_read_saved_view(self, explorer_service, mock_transport):
         response = Mock()
