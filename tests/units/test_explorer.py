@@ -60,6 +60,22 @@ def _saved_view_payload(view_id: str) -> dict:
     }
 
 
+def _saved_view_payload_live_variant(view_id: str) -> dict:
+    return {
+        "id": view_id,
+        "type": "explorer-saved-queries",
+        "attributes": {
+            "name": "my-view",
+            "created-at": "2024-10-11T16:18:51.442Z",
+            "query-type": "workspaces",
+            "query": {
+                "filter": [{"workspace-name": {"contains": ["r2l7cj4v"]}}],
+                "fields": {"workspaces": []},
+            },
+        },
+    }
+
+
 class TestExplorerQuery:
     def test_query_with_filter_and_pagination(self, explorer_service, mock_transport):
         first = Mock()
@@ -162,6 +178,9 @@ class TestExplorerSavedViews:
         body = call[1]["json_body"]
         assert body["data"]["type"] == "explorer-saved-queries"
         assert body["data"]["attributes"]["query-type"] == "workspaces"
+        assert body["data"]["attributes"]["query"]["filter"] == [
+            {"workspace_name": {"contains": ["test"]}}
+        ]
 
     def test_read_saved_view(self, explorer_service, mock_transport):
         response = Mock()
@@ -174,6 +193,23 @@ class TestExplorerSavedViews:
         mock_transport.request.assert_called_once_with(
             "GET", "/api/v2/organizations/acme/explorer/views/sq-1"
         )
+
+    def test_read_saved_view_with_live_query_shape(
+        self, explorer_service, mock_transport
+    ):
+        response = Mock()
+        response.json.return_value = {"data": _saved_view_payload_live_variant("sq-2")}
+        mock_transport.request.return_value = response
+
+        view = explorer_service.read_saved_view("acme", "sq-2")
+
+        assert view.id == "sq-2"
+        assert view.query.query_type == ExplorerViewType.WORKSPACES
+        assert view.query.filter is not None
+        assert view.query.filter[0].field == "workspace_name"
+        assert view.query.filter[0].operator == "contains"
+        assert view.query.filter[0].value == ["r2l7cj4v"]
+        assert view.query.fields == []
 
     def test_update_saved_view(self, explorer_service, mock_transport):
         response = Mock()
@@ -199,10 +235,14 @@ class TestExplorerSavedViews:
         assert call[0][1] == "/api/v2/organizations/acme/explorer/views/sq-1"
         assert call[1]["json_body"]["data"]["id"] == "sq-1"
         assert call[1]["json_body"]["data"]["attributes"]["name"] == "my-view-updated"
+        assert call[1]["json_body"]["data"]["attributes"]["query"]["filter"] == [
+            {"workspace_name": {"contains": ["prod"]}}
+        ]
 
     def test_delete_saved_view(self, explorer_service, mock_transport):
         response = Mock()
         response.json.return_value = {"data": _saved_view_payload("sq-1")}
+        response.text = '{"data":{"id":"sq-1"}}'
         mock_transport.request.return_value = response
 
         view = explorer_service.delete_saved_view("acme", "sq-1")
@@ -211,6 +251,15 @@ class TestExplorerSavedViews:
         mock_transport.request.assert_called_once_with(
             "DELETE", "/api/v2/organizations/acme/explorer/views/sq-1"
         )
+
+    def test_delete_saved_view_empty_response(self, explorer_service, mock_transport):
+        response = Mock()
+        response.text = ""
+        response.json.side_effect = ValueError("No JSON body")
+        mock_transport.request.return_value = response
+
+        view = explorer_service.delete_saved_view("acme", "sq-1")
+        assert view.id == "sq-1"
 
     def test_saved_view_results(self, explorer_service, mock_transport):
         first = Mock()

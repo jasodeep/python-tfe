@@ -19,6 +19,7 @@ class ExplorerViewType(str, Enum):
     TF_VERSIONS = "tf_versions"
     PROVIDERS = "providers"
     MODULES = "modules"
+    RESOURCES = "resources"
 
 
 class ExplorerUrlFilter(BaseModel):
