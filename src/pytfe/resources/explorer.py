@@ -5,16 +5,24 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from collections.abc import Iterator
 from typing import Any
 
-from ..errors import InvalidExplorerSavedViewIDError, InvalidOrgError
+from ..errors import (
+    InvalidExplorerSavedViewIDError,
+    InvalidOrgError,
+    NotFound,
+    ServerError,
+)
 from ..models.explorer import (
     ExplorerQueryOptions,
     ExplorerRow,
     ExplorerSavedView,
     ExplorerSavedViewCreateOptions,
     ExplorerSavedViewUpdateOptions,
+    ExplorerUrlFilter,
 )
 from ..utils import valid_string_id
 from ._base import _Service
@@ -149,6 +157,50 @@ def _deleted_saved_view_fallback(view_id: str) -> ExplorerSavedView:
     )
 
 
+def _query_options_from_saved_view(
+    saved_view: ExplorerSavedView,
+) -> ExplorerQueryOptions:
+    """Convert a saved view query into ExplorerQueryOptions."""
+    query = saved_view.query
+    filters: list[ExplorerUrlFilter] = []
+    if query.filter:
+        for idx, flt in enumerate(query.filter):
+            for value_index, value in enumerate(flt.value or []):
+                filters.append(
+                    ExplorerUrlFilter(
+                        index=idx,
+                        field=flt.field,
+                        operator=flt.operator,
+                        value=str(value),
+                        value_index=value_index,
+                    )
+                )
+    return ExplorerQueryOptions.model_validate(
+        {
+            "type": saved_view.query_type,
+            "sort": ",".join(query.sort) if query.sort else None,
+            "fields": ",".join(query.fields) if query.fields else None,
+            "filters": filters or None,
+        }
+    )
+
+
+def _rows_to_csv(rows: list[ExplorerRow]) -> str:
+    """Build CSV from Explorer rows attributes."""
+    if not rows:
+        return ""
+    keys: set[str] = set()
+    for row in rows:
+        keys.update(row.attributes.keys())
+    fieldnames = sorted(keys)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: row.attributes.get(k, "") for k in fieldnames})
+    return buf.getvalue()
+
+
 class Explorer(_Service):
     """Explorer API for Terraform Enterprise."""
 
@@ -265,5 +317,16 @@ class Explorer(_Service):
         if not valid_string_id(view_id):
             raise InvalidExplorerSavedViewIDError()
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}/csv"
-        resp = self.t.request("GET", path)
-        return resp.text
+        try:
+            resp = self.t.request("GET", path)
+            return resp.text
+        except (NotFound, ServerError):
+            pass
+
+        try:
+            saved_view = self.read_saved_view(organization, view_id)
+            options = _query_options_from_saved_view(saved_view)
+            return self.export_csv(organization, options)
+        except (NotFound, ServerError):
+            rows = list(self.saved_view_results(organization, view_id))
+            return _rows_to_csv(rows)

@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from pytfe.errors import InvalidExplorerSavedViewIDError, InvalidOrgError
+from pytfe.errors import InvalidExplorerSavedViewIDError, InvalidOrgError, NotFound
 from pytfe.models import (
     ExplorerQueryOptions,
     ExplorerSavedQuery,
@@ -288,6 +288,41 @@ class TestExplorerSavedViews:
         mock_transport.request.assert_called_once_with(
             "GET", "/api/v2/organizations/acme/explorer/views/sq-1/csv"
         )
+
+    def test_saved_view_results_csv_fallback_to_export(
+        self, explorer_service, mock_transport
+    ):
+        first = NotFound("not found", status=404)
+        read_resp = Mock()
+        read_resp.json.return_value = {"data": _saved_view_payload("sq-1")}
+        export_resp = Mock()
+        export_resp.text = "workspace_name\nfrom-export\n"
+        mock_transport.request.side_effect = [first, read_resp, export_resp]
+
+        csv_text = explorer_service.saved_view_results_csv("acme", "sq-1")
+        assert "from-export" in csv_text
+
+    def test_saved_view_results_csv_fallback_to_rows(
+        self, explorer_service, mock_transport
+    ):
+        not_found = NotFound("not found", status=404)
+        read_resp = Mock()
+        read_resp.json.return_value = {"data": _saved_view_payload("sq-1")}
+        first_results = Mock()
+        first_results.json.return_value = {"data": [_row_payload("ws-1")]}
+        second_results = Mock()
+        second_results.json.return_value = {"data": []}
+        mock_transport.request.side_effect = [
+            not_found,  # /csv
+            read_resp,  # read saved view
+            not_found,  # export_csv fallback fails
+            first_results,  # saved_view_results page 1
+            second_results,  # saved_view_results page 2
+        ]
+
+        csv_text = explorer_service.saved_view_results_csv("acme", "sq-1")
+        assert "workspace-name" in csv_text
+        assert "demo-workspace" in csv_text
 
     @pytest.mark.parametrize("org", ["", None])
     def test_saved_view_methods_invalid_org(self, explorer_service, org):
