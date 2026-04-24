@@ -4,10 +4,12 @@
 
 ### Explorer API
 * Added Explorer resource support with query, CSV export, saved view CRUD, saved view result query, and saved view CSV export endpoints.
+# Released
 
-# v0.1.3
+# v0.1.4
 
 ## Enhancements
+* Standardize Notification Configuration option models on Pydantic [#132](https://github.com/hashicorp/python-tfe/pull/132)
 
 ### Iterator Pattern Migration
 * Migrated Run resource list operations to iterator pattern by @NimishaShrivastava-dev [#91](https://github.com/hashicorp/python-tfe/pull/91)

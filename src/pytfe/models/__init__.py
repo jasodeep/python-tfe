@@ -70,6 +70,19 @@ from .explorer import (
     ExplorerViewType,
 )
 
+# ── Notification Configurations ───────────────────────────────────────────────
+from .notification_configuration import (
+    DeliveryResponse,
+    NotificationConfiguration,
+    NotificationConfigurationCreateOptions,
+    NotificationConfigurationList,
+    NotificationConfigurationListOptions,
+    NotificationConfigurationSubscribableChoice,
+    NotificationConfigurationUpdateOptions,
+    NotificationDestinationType,
+    NotificationTriggerType,
+)
+
 # ── OAuth ─────────────────────────────────────────────────────────────────────
 from .oauth_client import (
     OAuthClient,
@@ -387,6 +400,16 @@ from .workspace_resource import (
 
 # ── Public surface ────────────────────────────────────────────────────────────
 __all__ = [
+    # Notification configurations
+    "DeliveryResponse",
+    "NotificationConfiguration",
+    "NotificationConfigurationCreateOptions",
+    "NotificationConfigurationList",
+    "NotificationConfigurationListOptions",
+    "NotificationConfigurationSubscribableChoice",
+    "NotificationConfigurationUpdateOptions",
+    "NotificationDestinationType",
+    "NotificationTriggerType",
     # OAuth
     "OAuthClient",
     "OAuthClientAddProjectsOptions",
