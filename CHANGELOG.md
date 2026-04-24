@@ -1,5 +1,10 @@
 # Unreleased
 
+## Features
+
+### Explorer API
+* Added Explorer resource support with query, CSV export, saved view CRUD, saved view result query, and saved view CSV export endpoints.
+
 # v0.1.3
 
 ## Enhancements
