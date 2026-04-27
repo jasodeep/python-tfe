@@ -16,13 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExplorerViewType(str, Enum):
-    """Explorer `type` / `query-type` discriminator (see product docs for supported views)."""
+    """Explorer `type` / `query-type` discriminator (HashiCorp Explorer API view types only)."""
 
     WORKSPACES = "workspaces"
     TF_VERSIONS = "tf_versions"
     PROVIDERS = "providers"
     MODULES = "modules"
-    RESOURCES = "resources"  # Present when the deployment exposes a resources view.
 
 
 class ExplorerUrlFilter(BaseModel):

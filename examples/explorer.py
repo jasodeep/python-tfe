@@ -46,9 +46,8 @@
       ExplorerQueryOptions(view_type=ExplorerViewType.WORKSPACES, sort="-workspace_name",
       filters=[ExplorerUrlFilter(...)]).
     Required:
-      - view_type — ExplorerViewType (serialized to HTTP query key type). Allowed strings
-        per product docs: workspaces, tf_versions, providers, modules. This SDK also
-        defines resources for APIs that support that view.
+      - view_type — ExplorerViewType (serialized to HTTP query key type). Allowed values
+        match HashiCorp docs: workspaces, tf_versions, providers, modules.
     Optional:
       - sort — Comma-separated snake_case field names for the active view; prefix "-" for
         descending order.
@@ -355,7 +354,7 @@ def main() -> None:
             _print_csv_lines(
                 "CSV preview:",
                 csv_sv,
-                max_chars=300,
+                max_chars=500,
                 max_lines=6,
             )
             print("Summary: saved_view_results_csv completed.")

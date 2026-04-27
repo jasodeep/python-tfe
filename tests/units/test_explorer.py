@@ -15,6 +15,7 @@ from pytfe.errors import (
 )
 from pytfe.models import (
     ExplorerQueryOptions,
+    ExplorerRow,
     ExplorerSavedQuery,
     ExplorerSavedQueryFilter,
     ExplorerSavedViewCreateOptions,
@@ -22,7 +23,11 @@ from pytfe.models import (
     ExplorerUrlFilter,
     ExplorerViewType,
 )
-from pytfe.resources.explorer import Explorer
+from pytfe.resources.explorer import (
+    Explorer,
+    _normalize_explorer_csv_column_order,
+    _rows_to_csv,
+)
 
 
 @pytest.fixture
@@ -33,6 +38,36 @@ def mock_transport():
 @pytest.fixture
 def explorer_service(mock_transport):
     return Explorer(mock_transport)
+
+
+def test_normalize_explorer_csv_column_order_workspaces():
+    raw = "workspace_name,all_checks_succeeded\ndemo,true\n"
+    out = _normalize_explorer_csv_column_order(raw, ExplorerViewType.WORKSPACES)
+    assert out.splitlines()[0].startswith("all_checks_succeeded,workspace_name")
+
+
+def test_rows_to_csv_workspace_column_order_matches_doc():
+    """Fallback CSV header matches Explorer export/csv workspaces sample column order."""
+    rows = [
+        ExplorerRow.model_validate(
+            {
+                "id": "ws-1",
+                "type": "visibility-workspace",
+                "attributes": {"workspace-name": "demo-workspace"},
+            }
+        )
+    ]
+    csv_text = _rows_to_csv(rows, view_type=ExplorerViewType.WORKSPACES)
+    header = csv_text.strip().splitlines()[0]
+    assert header.startswith(
+        "all_checks_succeeded,current_rum_count,checks_errored,checks_failed,"
+        "checks_passed,checks_unknown,current_run_applied_at,current_run_external_id,"
+        "current_run_status,drifted,external_id,module_count,modules,organization_name,"
+        "project_external_id,project_name,provider_count,providers,resources_drifted,"
+        "resources_undrifted,state_version_terraform_version,vcs_repo_identifier,"
+        "workspace_created_at,workspace_name,workspace_terraform_version,workspace_updated_at"
+    )
+    assert "demo-workspace" in csv_text
 
 
 def _row_payload(row_id: str) -> dict:
@@ -309,12 +344,14 @@ class TestExplorerSavedViews:
         )
 
     def test_saved_view_results_csv(self, explorer_service, mock_transport):
-        response = Mock()
-        response.text = "workspace_name\nexample\n"
-        mock_transport.request.return_value = response
+        csv_resp = Mock()
+        csv_resp.text = "workspace_name,all_checks_succeeded\ndemo,true\n"
+        mock_transport.request.return_value = csv_resp
 
         csv_text = explorer_service.saved_view_results_csv("acme", "sq-1")
-        assert "workspace_name" in csv_text
+        assert csv_text.splitlines()[0].startswith(
+            "all_checks_succeeded,workspace_name"
+        )
         mock_transport.request.assert_called_once_with(
             "GET", "/api/v2/organizations/acme/explorer/views/sq-1/csv"
         )
@@ -351,7 +388,15 @@ class TestExplorerSavedViews:
         ]
 
         csv_text = explorer_service.saved_view_results_csv("acme", "sq-1")
-        assert "workspace-name" in csv_text
+        header = csv_text.strip().splitlines()[0]
+        assert header.startswith(
+            "all_checks_succeeded,current_rum_count,checks_errored,checks_failed,"
+            "checks_passed,checks_unknown,current_run_applied_at,current_run_external_id,"
+            "current_run_status,drifted,external_id,module_count,modules,organization_name,"
+            "project_external_id,project_name,provider_count,providers,resources_drifted,"
+            "resources_undrifted,state_version_terraform_version,vcs_repo_identifier,"
+            "workspace_created_at,workspace_name,workspace_terraform_version,workspace_updated_at"
+        )
         assert "demo-workspace" in csv_text
 
     @pytest.mark.parametrize("org", ["", None])

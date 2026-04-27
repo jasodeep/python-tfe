@@ -30,6 +30,7 @@ from ..models.explorer import (
     ExplorerSavedViewCreateOptions,
     ExplorerSavedViewUpdateOptions,
     ExplorerUrlFilter,
+    ExplorerViewType,
 )
 from ..utils import valid_string_id
 from ._base import _Service
@@ -259,19 +260,189 @@ def _query_options_from_saved_view(
     )
 
 
-def _rows_to_csv(rows: list[ExplorerRow]) -> str:
-    """Union of row attribute keys as header; last-resort CSV when /views/.../csv is unavailable."""
+# Column order matches HashiCorp Explorer API docs (view-type field tables and export/csv
+# workspaces sample): https://developer.hashicorp.com/terraform/cloud-docs/api-docs/explorer
+_EXPLORER_CSV_COLUMNS: dict[ExplorerViewType, tuple[str, ...]] = {
+    ExplorerViewType.WORKSPACES: (
+        "all_checks_succeeded",
+        "current_rum_count",
+        "checks_errored",
+        "checks_failed",
+        "checks_passed",
+        "checks_unknown",
+        "current_run_applied_at",
+        "current_run_external_id",
+        "current_run_status",
+        "drifted",
+        "external_id",
+        "module_count",
+        "modules",
+        "organization_name",
+        "project_external_id",
+        "project_name",
+        "provider_count",
+        "providers",
+        "resources_drifted",
+        "resources_undrifted",
+        "state_version_terraform_version",
+        "vcs_repo_identifier",
+        "workspace_created_at",
+        "workspace_name",
+        "workspace_terraform_version",
+        "workspace_updated_at",
+    ),
+    ExplorerViewType.TF_VERSIONS: ("version", "workspace_count", "workspaces"),
+    ExplorerViewType.PROVIDERS: (
+        "name",
+        "source",
+        "version",
+        "workspace_count",
+        "workspaces",
+    ),
+    ExplorerViewType.MODULES: (
+        "name",
+        "source",
+        "version",
+        "workspace_count",
+        "workspaces",
+    ),
+}
+
+_ROW_TYPE_TO_VIEW: dict[str, ExplorerViewType] = {
+    "visibility-workspace": ExplorerViewType.WORKSPACES,
+}
+
+
+def _infer_view_type_from_csv_header(header: list[str]) -> ExplorerViewType | None:
+    """Pick Explorer view type from CSV header names (no extra API call)."""
+    h = frozenset(header)
+    candidates: list[tuple[int, int, str, ExplorerViewType]] = []
+    for vt, cols in _EXPLORER_CSV_COLUMNS.items():
+        colset = frozenset(cols)
+        overlap = len(h & colset)
+        if overlap == 0:
+            continue
+        # Prefer more matching columns; tie-break to a narrower schema (e.g. tf_versions).
+        candidates.append((overlap, -len(colset), vt.value, vt))
+    if not candidates:
+        return None
+    _, _, _, vt = max(candidates)
+    return vt
+
+
+def _explorer_attribute_value(attrs: dict[str, Any], logical_snake: str) -> Any:
+    """Resolve API attribute keys (snake_case or kebab-case) for one logical Explorer column."""
+    hyphen = logical_snake.replace("_", "-")
+    if logical_snake in attrs:
+        return attrs[logical_snake]
+    if hyphen in attrs:
+        return attrs[hyphen]
+    return ""
+
+
+def _csv_fieldnames_for_explorer_rows(
+    rows: list[ExplorerRow],
+    view_type: ExplorerViewType | None,
+) -> tuple[list[str], frozenset[str]]:
+    """Doc-ordered columns first; trailing columns for attributes not in the doc schema."""
+    all_raw: set[str] = set()
+    for row in rows:
+        all_raw.update(row.attributes.keys())
+
+    order = _EXPLORER_CSV_COLUMNS.get(view_type) if view_type is not None else None
+    if not order:
+        seen: set[str] = set()
+        visit: list[str] = []
+        for row in rows:
+            for k in row.attributes:
+                if k not in seen:
+                    seen.add(k)
+                    visit.append(k)
+        return visit, frozenset()
+
+    canonical_set = frozenset(order)
+    matched_raw: set[str] = set()
+    for raw in all_raw:
+        for col in order:
+            if raw == col or raw == col.replace("_", "-"):
+                matched_raw.add(raw)
+                break
+
+    extras: list[str] = []
+    seen_extras: set[str] = set()
+    for row in rows:
+        for raw in row.attributes:
+            if raw not in canonical_set and raw not in seen_extras:
+                seen_extras.add(raw)
+                extras.append(raw)
+    return list(order) + extras, canonical_set
+
+
+def _infer_view_type_from_rows(rows: list[ExplorerRow]) -> ExplorerViewType | None:
+    if not rows:
+        return None
+    return _ROW_TYPE_TO_VIEW.get(rows[0].row_type)
+
+
+def _normalize_explorer_csv_column_order(
+    csv_text: str, view_type: ExplorerViewType | None
+) -> str:
+    """Reorder CSV header/data columns to match Explorer API doc order (GET CSV varies)."""
+    if not csv_text.strip() or view_type is None:
+        return csv_text
+    order = _EXPLORER_CSV_COLUMNS.get(view_type)
+    if not order:
+        return csv_text
+    try:
+        reader = csv.reader(io.StringIO(csv_text))
+        rows = list(reader)
+    except csv.Error:
+        return csv_text
+    if not rows or not rows[0]:
+        return csv_text
+    header = rows[0]
+    idx = {name: i for i, name in enumerate(header)}
+    order_set = frozenset(order)
+    canonical = [c for c in order if c in idx]
+    extras = [h for h in header if h not in order_set]
+    new_header = canonical + extras
+    if new_header == header:
+        return csv_text
+    perm = [idx[h] for h in new_header]
+    ncols = len(header)
+    out_rows: list[list[str]] = [new_header]
+    for row in rows[1:]:
+        padded = list(row) + [""] * max(0, ncols - len(row))
+        padded = padded[:ncols]
+        out_rows.append([padded[i] for i in perm])
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerows(out_rows)
+    return buf.getvalue()
+
+
+def _rows_to_csv(
+    rows: list[ExplorerRow],
+    *,
+    view_type: ExplorerViewType | None = None,
+) -> str:
+    """Build CSV from result rows; column order follows Explorer API docs when view_type is known."""
     if not rows:
         return ""
-    keys: set[str] = set()
-    for row in rows:
-        keys.update(row.attributes.keys())
-    fieldnames = sorted(keys)
+    vt = view_type if view_type is not None else _infer_view_type_from_rows(rows)
+    fieldnames, canonical_set = _csv_fieldnames_for_explorer_rows(rows, vt)
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
-        writer.writerow({k: row.attributes.get(k, "") for k in fieldnames})
+        attrs = row.attributes
+        row_out: dict[str, Any] = {}
+        for name in fieldnames:
+            if name in canonical_set:
+                row_out[name] = _explorer_attribute_value(attrs, name)
+            else:
+                row_out[name] = attrs.get(name, "")
+        writer.writerow(row_out)
     return buf.getvalue()
 
 
@@ -436,7 +607,16 @@ class Explorer(_Service):
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}/csv"
         try:
             resp = self.t.request("GET", path)
-            return resp.text
+            csv_text = resp.text
+            try:
+                parsed = list(csv.reader(io.StringIO(csv_text)))
+            except csv.Error:
+                return csv_text
+            if parsed and parsed[0]:
+                vt = _infer_view_type_from_csv_header(parsed[0])
+                if vt is not None:
+                    csv_text = _normalize_explorer_csv_column_order(csv_text, vt)
+            return csv_text
         except (NotFound, ServerError) as exc:
             _log.info(
                 "explorer.saved_view_results_csv: primary CSV route unavailable (%s); "
@@ -447,10 +627,14 @@ class Explorer(_Service):
             )
 
         # Fall back: replay saved definition via export_csv, then row materialization if needed.
+        saved_for_csv: ExplorerSavedView | None = None
         try:
-            saved_view = self.read_saved_view(organization, view_id)
-            options = _query_options_from_saved_view(saved_view)
+            saved_for_csv = self.read_saved_view(organization, view_id)
+            options = _query_options_from_saved_view(saved_for_csv)
             csv_text = self.export_csv(organization, options)
+            csv_text = _normalize_explorer_csv_column_order(
+                csv_text, saved_for_csv.query_type
+            )
             _log.info(
                 "explorer.saved_view_results_csv: used export_csv fallback org=%r view_id=%r",
                 organization,
@@ -466,4 +650,5 @@ class Explorer(_Service):
                 view_id,
             )
             rows = list(self.saved_view_results(organization, view_id))
-            return _rows_to_csv(rows)
+            vt = saved_for_csv.query_type if saved_for_csv is not None else None
+            return _rows_to_csv(rows, view_type=vt)
