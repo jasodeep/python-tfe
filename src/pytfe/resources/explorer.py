@@ -121,6 +121,11 @@ def _parse_row(item: dict[str, Any]) -> ExplorerRow:
     return ExplorerRow.model_validate(item)
 
 
+def _normalize_filter_field_name(raw_field: Any) -> str:
+    """Normalize filter field names to SDK model style."""
+    return str(raw_field).replace("-", "_")
+
+
 def _saved_query_to_api_shape(raw_query: dict[str, Any]) -> dict[str, Any]:
     """Map {field, operator, value} filter rows to nested {field: {operator: [...]}} JSON."""
     query = dict(raw_query)
@@ -134,7 +139,7 @@ def _saved_query_to_api_shape(raw_query: dict[str, Any]) -> dict[str, Any]:
             if "field" not in entry or "operator" not in entry:
                 mapped_filters.append(entry)
                 continue
-            field = str(entry.get("field", "")).replace("-", "_")
+            field = _normalize_filter_field_name(entry.get("field", ""))
             operator = str(entry.get("operator", ""))
             values = entry.get("value", [])
             if not isinstance(values, list):
@@ -166,7 +171,7 @@ def _normalize_saved_query(
                     value = [str(value)]
                 normalized_filters.append(
                     {
-                        "field": str(entry["field"]).replace("-", "_"),
+                        "field": _normalize_filter_field_name(entry["field"]),
                         "operator": str(entry["operator"]),
                         "value": [str(v) for v in value],
                     }
@@ -182,7 +187,7 @@ def _normalize_saved_query(
                         vals = values if isinstance(values, list) else [values]
                         normalized_filters.append(
                             {
-                                "field": str(field_name).replace("-", "_"),
+                                "field": _normalize_filter_field_name(field_name),
                                 "operator": str(operator),
                                 "value": [str(v) for v in vals],
                             }
@@ -216,18 +221,6 @@ def _parse_saved_view(item: dict[str, Any]) -> ExplorerSavedView:
             "created-at": attrs.get("created-at"),
             "query": _normalize_saved_query(query, query_type),
             "query-type": query_type,
-        }
-    )
-
-
-def _deleted_saved_view_fallback(view_id: str) -> ExplorerSavedView:
-    """Build a minimal saved view when delete responses have no body."""
-    return ExplorerSavedView.model_validate(
-        {
-            "id": view_id,
-            "name": "",
-            "query-type": "workspaces",
-            "query": {"type": "workspaces"},
         }
     )
 
@@ -550,38 +543,10 @@ class Explorer(_Service):
         _log.info("explorer.update_saved_view org=%r id=%r", organization, view.id)
         return view
 
-    def delete_saved_view(self, organization: str, view_id: str) -> ExplorerSavedView:
+    def delete_saved_view(self, organization: str, view_id: str) -> None:
         _require_organization_and_view(organization, view_id)
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}"
-        resp = self.t.request("DELETE", path)
-        # DELETE often returns an empty body; callers still receive a minimal ExplorerSavedView.
-        raw_text = (resp.text or "").strip()
-        if not raw_text:
-            _log.debug(
-                "explorer.delete_saved_view: empty body, returning stub org=%r id=%r",
-                organization,
-                view_id,
-            )
-            return _deleted_saved_view_fallback(view_id)
-
-        try:
-            payload = resp.json()
-        except ValueError:
-            _log.debug(
-                "explorer.delete_saved_view: non-JSON body, returning stub org=%r id=%r",
-                organization,
-                view_id,
-            )
-            return _deleted_saved_view_fallback(view_id)
-
-        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
-            return _parse_saved_view(payload["data"])
-        _log.debug(
-            "explorer.delete_saved_view: no data object, returning stub org=%r id=%r",
-            organization,
-            view_id,
-        )
-        return _deleted_saved_view_fallback(view_id)
+        self.t.request("DELETE", path)
 
     def saved_view_results(
         self, organization: str, view_id: str

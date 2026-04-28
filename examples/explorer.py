@@ -428,11 +428,9 @@ def main() -> None:
             updated = client.explorer.update_saved_view(org, created.id, update_opts)
             print(f"  update_saved_view: name is now {updated.name!r}")
 
-            # client.explorer.delete_saved_view removes the saved view; some API
-            # responses omit JSON, in which case the client still returns a minimal
-            # ExplorerSavedView carrying the deleted id.
-            deleted = client.explorer.delete_saved_view(org, created.id)
-            print(f"  delete_saved_view: completed for id {deleted.id}")
+            # client.explorer.delete_saved_view removes the saved view and returns None.
+            client.explorer.delete_saved_view(org, created.id)
+            print(f"  delete_saved_view: completed for id {created.id}")
             print("Summary: mutation sequence finished.")
         except TFEError as e:
             print(f"  API error: {e}")

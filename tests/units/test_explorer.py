@@ -181,6 +181,138 @@ class TestExplorerQuery:
         mock_transport.request.assert_has_calls(expected_calls)
         assert mock_transport.request.call_count == 4
 
+    def test_query_uses_pagination_meta_when_server_caps_page_size(
+        self, explorer_service, mock_transport
+    ):
+        first = Mock()
+        first.json.return_value = {
+            "data": [_row_payload("ws-1"), _row_payload("ws-2")],
+            "meta": {
+                "pagination": {
+                    "current-page": 1,
+                    "page-size": 2,
+                    "next-page": 2,
+                    "total-pages": 2,
+                }
+            },
+        }
+        second = Mock()
+        second.json.return_value = {
+            "data": [_row_payload("ws-3")],
+            "meta": {
+                "pagination": {
+                    "current-page": 2,
+                    "page-size": 2,
+                    "next-page": None,
+                    "total-pages": 2,
+                }
+            },
+        }
+        mock_transport.request.side_effect = [first, second]
+
+        options = ExplorerQueryOptions(
+            view_type=ExplorerViewType.WORKSPACES,
+            page_size=50,
+        )
+
+        rows = list(explorer_service.query(ORG, options))
+        assert [row.id for row in rows] == ["ws-1", "ws-2", "ws-3"]
+
+        expected_calls = [
+            call(
+                "GET",
+                EXPLORER_PATH,
+                params={"type": "workspaces", "page[size]": 50, "page[number]": 1},
+            ),
+            call(
+                "GET",
+                EXPLORER_PATH,
+                params={"type": "workspaces", "page[size]": 50, "page[number]": 2},
+            ),
+        ]
+        mock_transport.request.assert_has_calls(expected_calls)
+        assert mock_transport.request.call_count == 2
+
+    def test_query_uses_current_and_total_pages_when_next_page_missing(
+        self, explorer_service, mock_transport
+    ):
+        first = Mock()
+        first.json.return_value = {
+            "data": [_row_payload("ws-1")],
+            "meta": {"pagination": {"current-page": 1, "total-pages": 2}},
+        }
+        second = Mock()
+        second.json.return_value = {
+            "data": [_row_payload("ws-2")],
+            "meta": {"pagination": {"current-page": 2, "total-pages": 2}},
+        }
+        mock_transport.request.side_effect = [first, second]
+
+        rows = list(
+            explorer_service.query(
+                ORG, ExplorerQueryOptions(view_type=ExplorerViewType.WORKSPACES)
+            )
+        )
+        assert [row.id for row in rows] == ["ws-1", "ws-2"]
+
+        expected_calls = [
+            call(
+                "GET",
+                EXPLORER_PATH,
+                params={"type": "workspaces", "page[number]": 1, "page[size]": 100},
+            ),
+            call(
+                "GET",
+                EXPLORER_PATH,
+                params={"type": "workspaces", "page[number]": 2, "page[size]": 100},
+            ),
+        ]
+        mock_transport.request.assert_has_calls(expected_calls)
+        assert mock_transport.request.call_count == 2
+
+    def test_query_stops_when_pagination_meta_does_not_advance(
+        self, explorer_service, mock_transport
+    ):
+        first = Mock()
+        first.json.return_value = {
+            "data": [_row_payload("ws-1")],
+            "meta": {"pagination": {"current-page": 1, "total-pages": 2}},
+        }
+        second = Mock()
+        second.json.return_value = {
+            "data": [_row_payload("ws-1")],
+            "meta": {"pagination": {"current-page": 1, "total-pages": 2}},
+        }
+        mock_transport.request.side_effect = [first, second]
+
+        rows = list(
+            explorer_service.query(
+                ORG, ExplorerQueryOptions(view_type=ExplorerViewType.WORKSPACES)
+            )
+        )
+        assert [row.id for row in rows] == ["ws-1", "ws-1"]
+        assert mock_transport.request.call_count == 2
+
+    def test_query_stops_on_empty_page_even_if_next_page_present(
+        self, explorer_service, mock_transport
+    ):
+        first = Mock()
+        first.json.return_value = {
+            "data": [],
+            "meta": {
+                "pagination": {"current-page": 1, "next-page": 2, "total-pages": 5}
+            },
+        }
+        mock_transport.request.return_value = first
+
+        rows = list(
+            explorer_service.query(
+                ORG, ExplorerQueryOptions(view_type=ExplorerViewType.WORKSPACES)
+            )
+        )
+        assert rows == []
+        assert mock_transport.request.call_count == 1
+
     def test_query_invalid_org(self, explorer_service):
         with pytest.raises(InvalidOrgError):
             list(
@@ -379,50 +511,21 @@ class TestExplorerSavedViews:
             explorer_service.update_saved_view(ORG, VIEW_ID, options)
 
     def test_delete_saved_view(self, explorer_service, mock_transport):
-        response = Mock()
-        response.json.return_value = {"data": _saved_view_payload("sq-1")}
-        response.text = '{"data":{"id":"sq-1"}}'
-        mock_transport.request.return_value = response
-
-        view = explorer_service.delete_saved_view(ORG, VIEW_ID)
-        assert view.id == "sq-1"
+        result = explorer_service.delete_saved_view(ORG, VIEW_ID)
+        assert result is None
 
         _assert_single_request_call(mock_transport, "DELETE", f"{VIEWS_PATH}/{VIEW_ID}")
 
-    def test_delete_saved_view_empty_response(self, explorer_service, mock_transport):
-        response = Mock()
-        response.text = ""
-        response.json.side_effect = ValueError("No JSON body")
-        mock_transport.request.return_value = response
-
-        view = explorer_service.delete_saved_view(ORG, VIEW_ID)
-        assert view.id == "sq-1"
-
-    def test_delete_saved_view_non_json_body_returns_stub(
+    def test_delete_saved_view_ignores_response_body(
         self, explorer_service, mock_transport
     ):
         response = Mock()
-        response.text = "deleted"
+        response.text = '{"data":{"id":"unexpected"}}'
         response.json.side_effect = ValueError("No JSON body")
         mock_transport.request.return_value = response
 
-        view = explorer_service.delete_saved_view(ORG, VIEW_ID)
-        assert view.id == "sq-1"
-        assert view.name == ""
-        assert view.query_type == ExplorerViewType.WORKSPACES
-
-    def test_delete_saved_view_invalid_data_shape_returns_stub(
-        self, explorer_service, mock_transport
-    ):
-        response = Mock()
-        response.text = '{"data":[]}'
-        response.json.return_value = {"data": []}
-        mock_transport.request.return_value = response
-
-        view = explorer_service.delete_saved_view(ORG, VIEW_ID)
-        assert view.id == "sq-1"
-        assert view.name == ""
-        assert view.query_type == ExplorerViewType.WORKSPACES
+        result = explorer_service.delete_saved_view(ORG, VIEW_ID)
+        assert result is None
 
     def test_saved_view_results(self, explorer_service, mock_transport):
         first = Mock()
