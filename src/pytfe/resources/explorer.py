@@ -445,6 +445,15 @@ class Explorer(_Service):
     def query(
         self, organization: str, options: ExplorerQueryOptions
     ) -> Iterator[ExplorerRow]:
+        """Execute an Explorer query and iterate result rows across all pages.
+
+        Args:
+            organization: Organization slug that owns the Explorer data.
+            options: Query options including view type, filters, sort, and paging.
+
+        Yields:
+            ExplorerRow items returned by the Explorer endpoint.
+        """
         _require_organization(organization)
         _log.debug(
             "explorer.query org=%r view_type=%s",
@@ -457,6 +466,15 @@ class Explorer(_Service):
             yield _parse_row(item)
 
     def export_csv(self, organization: str, options: ExplorerQueryOptions) -> str:
+        """Run an Explorer query and return CSV text from the export endpoint.
+
+        Args:
+            organization: Organization slug that owns the Explorer data.
+            options: Query options including view type, filters, sort, and paging.
+
+        Returns:
+            Raw CSV text returned by the server.
+        """
         _require_organization(organization)
         _log.debug(
             "explorer.export_csv org=%r view_type=%s",
@@ -469,6 +487,14 @@ class Explorer(_Service):
         return resp.text
 
     def list_saved_views(self, organization: str) -> Iterator[ExplorerSavedView]:
+        """Iterate all saved Explorer views in an organization.
+
+        Args:
+            organization: Organization slug that owns the saved views.
+
+        Yields:
+            ExplorerSavedView resources from the list endpoint.
+        """
         _require_organization(organization)
         _log.debug("explorer.list_saved_views org=%r", organization)
         # GET collection of explorer-saved-queries for the org.
@@ -479,6 +505,15 @@ class Explorer(_Service):
     def create_saved_view(
         self, organization: str, options: ExplorerSavedViewCreateOptions
     ) -> ExplorerSavedView:
+        """Create a saved Explorer view.
+
+        Args:
+            organization: Organization slug that owns the saved view.
+            options: Saved-view name and query definition to persist.
+
+        Returns:
+            The created ExplorerSavedView as returned by the API.
+        """
         _require_organization(organization)
         # POST json:api explorer-saved-queries; filters rewritten for server expectations.
         attrs = _write_attributes_with_query_shape(options)
@@ -498,6 +533,15 @@ class Explorer(_Service):
         return view
 
     def read_saved_view(self, organization: str, view_id: str) -> ExplorerSavedView:
+        """Read one saved Explorer view by id.
+
+        Args:
+            organization: Organization slug that owns the saved view.
+            view_id: Saved-view id (for example, ``sq-...``).
+
+        Returns:
+            The saved view definition and query metadata.
+        """
         _require_organization_and_view(organization, view_id)
         _log.debug(
             "explorer.read_saved_view org=%r view_id=%r",
@@ -521,6 +565,16 @@ class Explorer(_Service):
         view_id: str,
         options: ExplorerSavedViewUpdateOptions,
     ) -> ExplorerSavedView:
+        """Replace attributes of an existing saved Explorer view.
+
+        Args:
+            organization: Organization slug that owns the saved view.
+            view_id: Saved-view id (for example, ``sq-...``).
+            options: Updated name and full replacement query definition.
+
+        Returns:
+            The updated ExplorerSavedView as returned by the API.
+        """
         _require_organization_and_view(organization, view_id)
         attrs = _write_attributes_with_query_shape(options)
         # PATCH includes resource id in the envelope per json:api update conventions.
@@ -544,6 +598,15 @@ class Explorer(_Service):
         return view
 
     def delete_saved_view(self, organization: str, view_id: str) -> None:
+        """Delete a saved Explorer view.
+
+        Args:
+            organization: Organization slug that owns the saved view.
+            view_id: Saved-view id (for example, ``sq-...``).
+
+        Returns:
+            None.
+        """
         _require_organization_and_view(organization, view_id)
         path = f"/api/v2/organizations/{organization}/explorer/views/{view_id}"
         self.t.request("DELETE", path)
@@ -551,6 +614,15 @@ class Explorer(_Service):
     def saved_view_results(
         self, organization: str, view_id: str
     ) -> Iterator[ExplorerRow]:
+        """Execute a saved view and iterate result rows across all pages.
+
+        Args:
+            organization: Organization slug that owns the saved view.
+            view_id: Saved-view id (for example, ``sq-...``).
+
+        Yields:
+            ExplorerRow items produced by the saved query.
+        """
         _require_organization_and_view(organization, view_id)
         _log.debug(
             "explorer.saved_view_results org=%r view_id=%r",
@@ -563,6 +635,19 @@ class Explorer(_Service):
             yield _parse_row(item)
 
     def saved_view_results_csv(self, organization: str, view_id: str) -> str:
+        """Return CSV for a saved view with resilient fallback behavior.
+
+        Tries the dedicated saved-view CSV endpoint first, then falls back to replaying
+        the saved view through ``export_csv`` and finally to materializing rows from the
+        paginated results endpoint.
+
+        Args:
+            organization: Organization slug that owns the saved view.
+            view_id: Saved-view id (for example, ``sq-...``).
+
+        Returns:
+            CSV text for the saved view results.
+        """
         _require_organization_and_view(organization, view_id)
         _log.debug(
             "explorer.saved_view_results_csv org=%r view_id=%r",
